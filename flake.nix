@@ -152,6 +152,11 @@
       };
     };
 
+    templates.rails = {
+      path = ./templates/rails;
+      description = "Rails project with devenv (Ruby, PostgreSQL, Redis)";
+    };
+
     devShells = forAllSystems (system:
       builtins.listToAttrs (map (ruby: {
           name = shellName ruby;
