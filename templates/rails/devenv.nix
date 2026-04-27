@@ -57,6 +57,19 @@
       export BUNDLE_GEMFILE="$PWD/.Gemfile.nix"
     fi
 
+    # Stale-gem guard — when nixpkgs bumps Ruby, native extensions in .gems
+    # (openssl.bundle, nokogiri, pg, ...) still link to the previous libruby
+    # in /nix/store, which gets garbage-collected. Detect a Ruby prefix
+    # change and wipe .gems so `bundle install` rebuilds against current Ruby.
+    ruby_prefix="$(ruby -e 'puts RbConfig::CONFIG["prefix"]')"
+    ruby_stamp="$PWD/.gems/.ruby-prefix"
+    if [ -d "$PWD/.gems" ] && [ -f "$ruby_stamp" ] && [ "$(cat "$ruby_stamp")" != "$ruby_prefix" ]; then
+      echo "Ruby store path changed → wiping .gems (run 'bundle install' to rebuild)"
+      rm -rf "$PWD/.gems"
+    fi
+    mkdir -p "$PWD/.gems"
+    echo "$ruby_prefix" > "$ruby_stamp"
+
     # Local gems — keep gems per-project, not in nix store
     export GEM_HOME="$PWD/.gems"
     export GEM_PATH="$PWD/.gems"
