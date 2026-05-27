@@ -79,6 +79,7 @@
         libxml2
         libxslt
         imagemagick
+        vips
         pkg-config
         gnumake
         gcc
