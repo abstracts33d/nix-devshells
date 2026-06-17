@@ -32,16 +32,27 @@ This caused a real outage: **vconfig's server stopped booting** because it gaine
 
 ## Architecture
 
-`nix-devshells` adds the `devenv` flake input and exposes `outputs.devenvModules.rails`, a devenv module. The existing `lib.mkRailsShell` and `rails-rubyXX` plain shells stay for any non-migrated consumer.
+**Module-exposure mechanism (confirmed empirically — devenv 2.1.3).** devenv does *not* consume modules via a `devenvModules.rails` flake output. A reusable module is just a `devenv.nix` (or any `.nix` module file) **at a path inside the input repo**; consumers reference it by `<input-name>/<path>`. So `nix-devshells` exposes the module by committing it at a stable path — `rails/devenv.nix` — and declares the `devenv` input itself so the module can use devenv options. (The flake's existing `lib.mkRailsShell` and `rails-rubyXX` plain shells stay for any non-migrated consumer; they are unrelated to devenv module exposure.)
 
 A consumer repo contains:
 
-- `devenv.yaml` declaring the `digitpro-devshells` input (pinned to a commit/tag).
-- `devenv.nix`:
+- `devenv.yaml` declaring the `digitpro-devshells` input (pinned to a commit/tag) and importing the module by input-relative path. The imported input is referenced as a non-flake source (`flake: false`); `imports:` entries are *not* flake outputs but paths within the input:
+
+  ```yaml
+  inputs:
+    nixpkgs:
+      url: github:cachix/devenv-nixpkgs/rolling
+    digitpro-devshells:
+      url: github:abstracts33d/nix-devshells/<pinned-rev>
+      flake: false
+  imports:
+    - digitpro-devshells/rails
+  ```
+
+- `devenv.nix` — sets *only* the per-repo config; the import is declared in `devenv.yaml`, not here:
 
   ```nix
-  { pkgs, ... }: {
-    imports = [ inputs.digitpro-devshells.devenvModules.rails ];
+  { ... }: {
     digitpro.rails = {
       ruby = "3.2";
       postgres.enable = true;
@@ -50,6 +61,8 @@ A consumer repo contains:
   ```
 
 - `.envrc`: `use flake . --impure` (devenv requires impurity).
+
+  Note: with the flakeless `devenv` CLI the above `devenv.yaml`/`devenv.nix` are sufficient. With the flake-integration path (`nix develop`/`use flake`), the consumer's `flake.nix` instead lists the module under `devenv.lib.mkShell { modules = [ (digitpro-devshells + "/rails/devenv.nix") ]; }` with `digitpro-devshells.flake = false;` as an input. Both were verified to set module env (proof: `SPIKE_OK`).
 
 Updating the shared module updates every consumer on the next `direnv reload` (subject to each repo's pinned input — see Testing).
 
@@ -105,7 +118,7 @@ Both opt-in. When `postgres.enable`, the module turns on `services.postgres` and
 
 ## Migration plan
 
-1. Build `devenvModules.rails` in `nix-devshells` with all always-on internals.
+1. Build the `rails/devenv.nix` module in `nix-devshells` (committed at that path, imported by consumers as `digitpro-devshells/rails`) with all always-on internals.
 2. Add Tier-1 `flake check` + fixture app.
 3. **Canary:** migrate AMR-back (lowest risk — already runs the canonical pattern); verify boot + suite in-shell.
 4. Roll out: vconfig, topboard (`postgresql_16`), isfm (`node 24`), boardpilot.
