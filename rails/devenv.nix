@@ -1,6 +1,13 @@
 { lib, pkgs, config, ... }:
 let
   cfg = config.digitpro.rails;
+  rubyPkg = { "2.7" = pkgs.ruby_2_7; "3.2" = pkgs.ruby_3_2; "3.3" = pkgs.ruby_3_3; "3.4" = pkgs.ruby_3_4; }.${cfg.ruby};
+  nodePkg = { "22" = pkgs.nodejs_22; "24" = pkgs.nodejs_24; }.${cfg.node.version};
+  vips =
+    if pkgs.stdenv.isDarwin
+    then (pkgs.vips.override { matio = null; withIntrospection = false; }).overrideAttrs
+           (prev: { mesonFlags = (prev.mesonFlags or []) ++ [ "-Dmatio=disabled" ]; })
+    else pkgs.vips;
 in {
   options.digitpro.rails = {
     ruby = lib.mkOption {
@@ -23,6 +30,69 @@ in {
   };
 
   config = {
-    # filled in by later tasks
+    languages.ruby = {
+      enable = true;
+      package = rubyPkg;
+      bundler.enable = false;  # use Ruby's bundled bundler (avoids rubygems integrity conflict)
+    };
+
+    languages.javascript = lib.mkIf cfg.node.enable {
+      enable = true;
+      package = nodePkg;
+      yarn.enable = cfg.node.packageManager == "yarn";
+      npm.enable = cfg.node.packageManager == "npm";
+    };
+
+    packages = with pkgs; [
+      cfg.postgres.package
+      libyaml libffi zlib readline openssl libxml2 libxslt
+      imagemagick vips pkg-config gnumake gcc
+    ] ++ cfg.extraPackages;
+
+    env = {
+      PGHOST = "/run/postgresql";
+      DATABASE_URL = "postgresql:///";
+      BUNDLE_BUILD__PG = "--with-pg-config=${lib.getExe' cfg.postgres.package "pg_config"}";
+      BUNDLE_BUILD__NOKOGIRI = "--use-system-libraries";
+      DISABLE_SPRING = "1";
+      LD_LIBRARY_PATH = lib.makeLibraryPath [ vips pkgs.imagemagick ];
+    } // cfg.extraEnv;
+
+    enterShell = ''
+      # Gemfile shadow — strip the `ruby "X.Y.Z"` pin so bundler accepts the
+      # nixpkgs patch version. Symlink the lockfile so `bundle install` writes
+      # flow back to the canonical Gemfile.lock.
+      if grep -q '^ruby "' Gemfile 2>/dev/null; then
+        sed '/^ruby "/d' Gemfile > .Gemfile.nix
+        ln -sf Gemfile.lock .Gemfile.nix.lock
+        export BUNDLE_GEMFILE="$PWD/.Gemfile.nix"
+      fi
+
+      # Stale-gem guard — wipe .gems when the Ruby store prefix changes.
+      ruby_prefix="$(ruby -e 'puts RbConfig::CONFIG["prefix"]')"
+      ruby_stamp="$PWD/.gems/.ruby-prefix"
+      if [ -d "$PWD/.gems" ] && [ -f "$ruby_stamp" ] && [ "$(cat "$ruby_stamp")" != "$ruby_prefix" ]; then
+        echo "Ruby store path changed → wiping .gems (run 'bundle install' to rebuild)"
+        rm -rf "$PWD/.gems"
+      fi
+      mkdir -p "$PWD/.gems"
+      echo "$ruby_prefix" > "$ruby_stamp"
+
+      # Local gems in a versioned subdir
+      ruby_abi="$(ruby -e 'puts RbConfig::CONFIG["ruby_version"]')"
+      export BUNDLE_PATH="$PWD/.gems"
+      export GEM_HOME="$PWD/.gems/ruby/$ruby_abi"
+      export GEM_PATH="$PWD/.gems/ruby/$ruby_abi"
+      export PATH="$PWD/.gems/ruby/$ruby_abi/bin:$PWD/bin:$PATH"
+
+      # Warn (don't block) when configured ruby ≠ .ruby-version major.minor
+      if [ -f .ruby-version ]; then
+        rv="$(tr -d 'ruby- \n' < .ruby-version | cut -d. -f1,2)"
+        if [ -n "$rv" ] && [ "$rv" != "${cfg.ruby}" ]; then
+          printf '\033[33m⚠ devenv: configured ruby ${cfg.ruby} ≠ .ruby-version (%s). Update digitpro.rails.ruby or .ruby-version.\033[0m\n' "$rv"
+        fi
+      fi
+      echo "Rails devenv: Ruby $(ruby --version | cut -d' ' -f2) | Node $(node --version 2>/dev/null || echo n/a)"
+    '';
   };
 }

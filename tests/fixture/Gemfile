@@ -1,0 +1,6 @@
+source "https://rubygems.org"
+ruby "3.4.1"
+
+gem "nokogiri"   # native, uses libxml2
+gem "pg"         # native, needs pg_config + libpq
+gem "ruby-vips"  # FFI dlopen of libvips.so.42 at require time

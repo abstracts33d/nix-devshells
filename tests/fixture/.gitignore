@@ -1,0 +1,6 @@
+# devenv / bundler build artifacts produced by the smoke test
+.devenv/
+.devenv.flake.nix
+.gems/
+.Gemfile.nix
+.Gemfile.nix.lock
