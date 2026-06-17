@@ -47,7 +47,12 @@ in {
       libyaml libffi zlib readline openssl libxml2 libxslt
       imagemagick vips pkg-config gnumake gcc
     ] ++ lib.optionals cfg.postgres.enable [ cfg.postgres.package cfg.postgres.package.pg_config ]
+      ++ lib.optional cfg.devenvUp.enable pkgs.foreman
       ++ cfg.extraPackages;
+
+    processes = lib.mkIf cfg.devenvUp.enable {
+      app.exec = "exec foreman start -f Procfile.dev";
+    };
 
     env = {
       BUNDLE_BUILD__NOKOGIRI = "--use-system-libraries";
