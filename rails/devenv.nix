@@ -52,7 +52,7 @@ in {
     env = {
       PGHOST = "/run/postgresql";
       DATABASE_URL = "postgresql:///";
-      BUNDLE_BUILD__PG = "--with-pg-config=${lib.getExe' cfg.postgres.package "pg_config"}";
+      BUNDLE_BUILD__PG = "--with-pg-config=${lib.getExe' cfg.postgres.package.pg_config "pg_config"}";
       BUNDLE_BUILD__NOKOGIRI = "--use-system-libraries";
       DISABLE_SPRING = "1";
       LD_LIBRARY_PATH = lib.makeLibraryPath [ vips pkgs.imagemagick ];
