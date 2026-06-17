@@ -6,6 +6,7 @@
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-24.11";
     nixpkgs-22_11.url = "github:NixOS/nixpkgs/nixos-22.11";
     nixpkgs-21_05.url = "github:NixOS/nixpkgs/nixos-21.05";
+    devenv.url = "github:cachix/devenv";
   };
 
   outputs = {
