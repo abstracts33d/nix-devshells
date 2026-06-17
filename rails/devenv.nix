@@ -105,7 +105,7 @@ in {
 
       # Warn (don't block) when configured ruby ≠ .ruby-version major.minor
       if [ -f .ruby-version ]; then
-        rv="$(tr -d 'ruby- \n' < .ruby-version | cut -d. -f1,2)"
+        rv="$(tr -d 'ruby \n-' < .ruby-version | cut -d. -f1,2)"
         if [ -n "$rv" ] && [ "$rv" != "${cfg.ruby}" ]; then
           printf '\033[33m⚠ devenv: configured ruby ${cfg.ruby} ≠ .ruby-version (%s). Update digitpro.rails.ruby or .ruby-version.\033[0m\n' "$rv"
         fi
