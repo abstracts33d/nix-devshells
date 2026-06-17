@@ -44,19 +44,32 @@ in {
     };
 
     packages = with pkgs; [
-      cfg.postgres.package
       libyaml libffi zlib readline openssl libxml2 libxslt
       imagemagick vips pkg-config gnumake gcc
-    ] ++ cfg.extraPackages;
+    ] ++ lib.optionals cfg.postgres.enable [ cfg.postgres.package cfg.postgres.package.pg_config ]
+      ++ cfg.extraPackages;
 
     env = {
-      PGHOST = "/run/postgresql";
-      DATABASE_URL = "postgresql:///";
-      BUNDLE_BUILD__PG = "--with-pg-config=${lib.getExe' cfg.postgres.package.pg_config "pg_config"}";
       BUNDLE_BUILD__NOKOGIRI = "--use-system-libraries";
       DISABLE_SPRING = "1";
       LD_LIBRARY_PATH = lib.makeLibraryPath [ vips pkgs.imagemagick ];
+    } // lib.optionalAttrs cfg.postgres.enable {
+      BUNDLE_BUILD__PG = "--with-pg-config=${lib.getExe' cfg.postgres.package.pg_config "pg_config"}";
+      # devenv's managed postgres listens socket-only and sets PGHOST to
+      # ${DEVENV_RUNTIME}/postgres; mirror that so DATABASE_URL resolves
+      # against the managed instance's unix socket.
+      PGHOST = "${config.env.DEVENV_RUNTIME}/postgres";
+      DATABASE_URL = "postgresql:///";
+    } // lib.optionalAttrs cfg.redis.enable {
+      REDIS_URL = "redis://localhost:6379";
     } // cfg.extraEnv;
+
+    services.postgres = lib.mkIf cfg.postgres.enable {
+      enable = true;
+      package = cfg.postgres.package;
+      listen_addresses = "";  # socket-only; PGHOST -> ${DEVENV_RUNTIME}/postgres
+    };
+    services.redis.enable = cfg.redis.enable;
 
     enterShell = ''
       # Gemfile shadow — strip the `ruby "X.Y.Z"` pin so bundler accepts the
