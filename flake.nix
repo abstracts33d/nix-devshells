@@ -4,19 +4,21 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-24.11";
-    # ruby_3_2 was removed from nixos-unstable (EOL during 25.11); 25.05 still
-    # ships it and is new enough for devenv's buildEnv. Used only by the 3.2 check.
-    nixpkgs-25_05.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-22_11.url = "github:NixOS/nixpkgs/nixos-22.11";
     nixpkgs-21_05.url = "github:NixOS/nixpkgs/nixos-21.05";
     devenv.url = "github:cachix/devenv";
+    # Required by the slim rails/devenv.nix module: devenv resolves
+    # `languages.ruby.version` (exact patch from .ruby-version) against this
+    # input. devenv does not bundle it, so the module repo's checks declare it
+    # and thread it into devenv.lib.mkShell; consumers must add it too.
+    nixpkgs-ruby.url = "github:bobvanderlinden/nixpkgs-ruby";
+    nixpkgs-ruby.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = {
     self,
     nixpkgs,
     nixpkgs-stable,
-    nixpkgs-25_05,
     nixpkgs-22_11,
     nixpkgs-21_05,
     devenv,
@@ -150,39 +152,37 @@
     # build the devenv shell (proves it evaluates + builds) and assert two
     # network-free invariants: (1) libvips.so.42 is reachable via the shell's
     # LD_LIBRARY_PATH — the regression that broke vconfig — and (2) the ruby
-    # package is the expected major.minor. The check FAILS hard if vips is not
+    # interpreter is the expected version. The check FAILS hard if vips is not
     # on the library path: the loop over LD_LIBRARY_PATH finds no libvips.so.42
     # and the guard `exit 1`s.
+    #
+    # The slim module reads the version from the consumer's .ruby-version via
+    # lib.mkDefault. Pure flake checks have no consumer project dir, so each
+    # check pins `languages.ruby.version` directly with lib.mkForce — devenv
+    # then resolves the exact patch from the `nixpkgs-ruby` input (threaded in
+    # via `inputs`). `ruby` here is the exact patch version (e.g. "3.4.1").
     mkDevenvCheck = system: ruby: let
-      # Pick the nixpkgs that still ships a working ruby for this version: 3.4/3.3
-      # are current on unstable, but ruby_3_2 was removed from unstable (EOL during
-      # 25.11), so the 3.2 check uses nixos-25.05 (still ships ruby_3_2 and is new
-      # enough for devenv's buildEnv). Mirrors mkRailsShellFor's per-version nixpkgs.
-      checkNixpkgs =
+      pkgs = import nixpkgs {inherit system;};
+      inherit (pkgs) lib;
+      modules = [
+        ./rails/devenv.nix
         {
-          "3.4" = nixpkgs;
-          "3.3" = nixpkgs;
-          "3.2" = nixpkgs-25_05;
+          # Pin the version directly (mkForce overrides the module's
+          # .ruby-version-derived mkDefault); devenv resolves the exact patch
+          # from nixpkgs-ruby. The pure check has no consumer project dir, so
+          # give devenv a stand-in root for its internal state/runtime paths —
+          # nothing reads from it because the version is forced above.
+          languages.ruby.version = lib.mkForce ruby;
+          devenv.root = lib.mkForce "/build/devenv-check";
         }
-        .${
-          ruby
-        };
-      pkgs = import checkNixpkgs {inherit system;};
+      ];
       eval = devenv.lib.mkEval {
-        inherit pkgs;
+        inherit pkgs modules;
         inputs = inputs // {self = self;};
-        modules = [
-          ./rails/devenv.nix
-          {digitpro.rails.ruby = ruby;}
-        ];
       };
       shell = devenv.lib.mkShell {
-        inherit pkgs;
+        inherit pkgs modules;
         inputs = inputs // {self = self;};
-        modules = [
-          ./rails/devenv.nix
-          {digitpro.rails.ruby = ruby;}
-        ];
       };
       ldLibraryPath = eval.config.env.LD_LIBRARY_PATH;
       rubyPkg = eval.config.languages.ruby.package;
@@ -213,10 +213,10 @@
         fi
         echo "ok: vips -> $found"
 
-        # (2) ruby major.minor must match the configured version.
-        rv="$(${rubyPkg}/bin/ruby -e 'print RUBY_VERSION' | cut -d. -f1,2)"
+        # (2) ruby must be the EXACT version provisioned from nixpkgs-ruby.
+        rv="$(${rubyPkg}/bin/ruby -e 'print RUBY_VERSION')"
         if [ "$rv" != "${ruby}" ]; then
-          echo "FAIL: ruby major.minor is $rv, expected ${ruby}" >&2
+          echo "FAIL: ruby is $rv, expected exactly ${ruby}" >&2
           exit 1
         fi
         echo "ok: ruby $rv"
@@ -225,10 +225,11 @@
         touch $out
       '';
 
-    # Wired across 3.2/3.3/3.4 (all three are real flake checks). Locally only
-    # 3.4 was executed to prove the mechanism (3.2/3.3 pull a second nixpkgs and
-    # compile ruby from source — too slow for the sandbox); CI runs all three.
-    checkRubyVersions = ["3.2" "3.3" "3.4"];
+    # Exact patch versions, provisioned via nixpkgs-ruby from a pinned
+    # `languages.ruby.version` (mkForce). All three are real flake checks; see
+    # the nix flake check log for which were executed locally vs in CI (each
+    # pulls + compiles a ruby, so a sandbox may run a subset — never silently).
+    checkRubyVersions = ["3.2.7" "3.3.6" "3.4.1"];
   in {
     lib = {
       inherit mkRailsShellFor;
