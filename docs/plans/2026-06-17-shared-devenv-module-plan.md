@@ -14,9 +14,11 @@
 
 ## File Structure
 
+> **Correction (post Task 1):** devenv modules are imported **by path**, not via a flake output. The module file lives at `rails/devenv.nix` and consumers import it as `digitpro-devshells/rails` (flakeless) or, on the flake-integration path our repos use, via `modules = [ (inputs.digitpro-devshells + "/rails/devenv.nix") ]` in the consumer's `flake.nix`. There is **no** `devenvModules.*` flake output. Consumers therefore keep a thin `flake.nix` (modified to import the shared module) — they do **not** delete it.
+
 In `abstracts33d/nix-devshells`:
-- `flake.nix` — *modify*: add `devenv` input; expose `devenvModules.rails`; add `checks`.
-- `modules/rails.nix` — *create*: the devenv module (options + config).
+- `flake.nix` — *modify*: add `devenv` input; add `checks`. (No `devenvModules` output.)
+- `rails/devenv.nix` — *create*: the devenv module (options + config), imported by consumers as `digitpro-devshells/rails`.
 - `tests/fixture/Gemfile` — *create*: minimal app exercising native gems (`ruby-vips`, `pg`, `nokogiri`).
 - `tests/fixture/Gemfile.lock` — *create*: resolved lock for the fixture.
 - `tests/smoke.rb` — *create*: smoke script (`require` native libs).
@@ -58,8 +60,8 @@ git commit -m "docs: pin devenv module-composition syntax in spec"
 ## Task 2: Add the devenv input and module skeleton
 
 **Files:**
-- Modify: `flake.nix` (inputs + outputs)
-- Create: `modules/rails.nix`
+- Modify: `flake.nix` (add `devenv` input only — no new outputs)
+- Create: `rails/devenv.nix`
 
 - [ ] **Step 1: Add the devenv input to `flake.nix`**
 
@@ -69,7 +71,7 @@ In `flake.nix` `inputs`, add:
     devenv.url = "github:cachix/devenv";
 ```
 
-- [ ] **Step 2: Create the module skeleton `modules/rails.nix`**
+- [ ] **Step 2: Create the module skeleton `rails/devenv.nix`**
 
 ```nix
 { lib, pkgs, config, ... }:
@@ -102,23 +104,20 @@ in {
 }
 ```
 
-- [ ] **Step 3: Expose the module from `flake.nix` outputs**
+- [ ] **Step 3: (No flake output.)**
 
-In the `outputs` attrset add:
+devenv modules are imported by path, not exposed as flake outputs. The module file at `rails/devenv.nix` IS the deliverable; no `outputs` change is needed. (Skip — kept as a step so numbering matches the commit/verify flow.)
 
-```nix
-    devenvModules.rails = import ./modules/rails.nix;
-```
+- [ ] **Step 4: Verify the module builds a devenv shell**
 
-- [ ] **Step 4: Verify the flake evaluates**
-
-Run: `nix flake show 2>&1 | grep -i devenvModules`
-Expected: `devenvModules` appears (and no eval error).
+Build a throwaway devenv shell from the module file with a sample config and confirm it evaluates (use the flake-integration form proven in Task 1 — `devenv.lib.mkShell { modules = [ ./rails/devenv.nix ]; }` in a scratch flake, or the spike consumer). Minimal eval check:
+Run: `nix eval --impure --expr 'builtins.isFunction (import /home/s33d/dev/abstracts33d/nix-devshells/rails/devenv.nix)'`
+Expected: `true` (the module is a function; full devenv build is exercised in Task 3).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add flake.nix modules/rails.nix
+git add flake.nix rails/devenv.nix
 git commit -m "feat: scaffold digitpro.rails devenv module + options"
 ```
 
@@ -186,7 +185,7 @@ git commit -m "test: add native-gem fixture + smoke script (currently failing)"
 
 ## Task 4: Implement core module config (languages, packages, base env)
 
-**Files:** Modify `modules/rails.nix` (`config` block)
+**Files:** Modify `rails/devenv.nix` (`config` block)
 
 - [ ] **Step 1: Map the `ruby` option to a package and write the `config`**
 
@@ -241,7 +240,7 @@ Expected: `"ok"` (no eval error in the flake).
 - [ ] **Step 3: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: core module config (ruby/node/packages/env)"
 ```
 
@@ -249,7 +248,7 @@ git commit -m "feat: core module config (ruby/node/packages/env)"
 
 ## Task 5: Bundler strategy + lockfile shadow (enterShell)
 
-**Files:** Modify `modules/rails.nix`
+**Files:** Modify `rails/devenv.nix`
 
 - [ ] **Step 1: Add the Gemfile/lockfile shadow to `config.enterShell`**
 
@@ -276,7 +275,7 @@ Expected: exit 0.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: bundler strategy + lockfile shadow in enterShell"
 ```
 
@@ -284,7 +283,7 @@ git commit -m "feat: bundler strategy + lockfile shadow in enterShell"
 
 ## Task 6: Stale-gem guard + versioned `.gems` layout
 
-**Files:** Modify `modules/rails.nix` (`enterShell`)
+**Files:** Modify `rails/devenv.nix` (`enterShell`)
 
 - [ ] **Step 1: Append the guard + layout to `enterShell`** (verbatim from AMR-back):
 
@@ -316,7 +315,7 @@ Expected: `ruby-vips-...` listed under `.gems/ruby/3.4.0/gems`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: stale-gem guard + versioned .gems layout"
 ```
 
@@ -324,7 +323,7 @@ git commit -m "feat: stale-gem guard + versioned .gems layout"
 
 ## Task 7: vips `LD_LIBRARY_PATH` + Darwin override
 
-**Files:** Modify `modules/rails.nix`
+**Files:** Modify `rails/devenv.nix`
 
 - [ ] **Step 1: Add the Darwin-aware vips package in the `config let` block**
 
@@ -352,7 +351,7 @@ Expected: a `…/vips-*/lib` path. (Full `require "vips"` pass is asserted in Ta
 - [ ] **Step 4: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: vips on LD_LIBRARY_PATH + darwin override"
 ```
 
@@ -360,7 +359,7 @@ git commit -m "feat: vips on LD_LIBRARY_PATH + darwin override"
 
 ## Task 8: `.ruby-version` mismatch warning
 
-**Files:** Modify `modules/rails.nix` (`enterShell`)
+**Files:** Modify `rails/devenv.nix` (`enterShell`)
 
 - [ ] **Step 1: Append the warning to `enterShell`**
 
@@ -382,7 +381,7 @@ In `tests/fixture`, create `.ruby-version` with `3.3.0`, then: `nix develop ..#.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: warn on configured-ruby vs .ruby-version mismatch"
 ```
 
@@ -390,7 +389,7 @@ git commit -m "feat: warn on configured-ruby vs .ruby-version mismatch"
 
 ## Task 9: Opt-in managed Postgres / Redis
 
-**Files:** Modify `modules/rails.nix`
+**Files:** Modify `rails/devenv.nix`
 
 - [ ] **Step 1: Verify devenv's Postgres socket/env wiring**
 
@@ -429,7 +428,7 @@ Expected: `1`. Stop with `devenv processes stop` / kill.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: opt-in managed postgres/redis with socket env wiring"
 ```
 
@@ -437,7 +436,7 @@ git commit -m "feat: opt-in managed postgres/redis with socket env wiring"
 
 ## Task 10: `devenv up` foreman wrapper
 
-**Files:** Modify `modules/rails.nix`
+**Files:** Modify `rails/devenv.nix`
 
 - [ ] **Step 1: Add the opt-in process that execs the Procfile**
 
@@ -457,7 +456,7 @@ In a consumer with `devenvUp.enable = true` and a `Procfile.dev`, run `devenv up
 - [ ] **Step 3: Commit**
 
 ```bash
-git add modules/rails.nix
+git add rails/devenv.nix
 git commit -m "feat: opt-in devenv up wrapper around Procfile.dev"
 ```
 
@@ -518,9 +517,10 @@ git commit -m "test: flake-check smoke tests across ruby shells + CI"
 
 ## Task 12: Canary migration — AMR-back
 
-**Files (in `digITpro/AMR-back`):**
-- Create: `devenv.yaml`, new `devenv.nix`
-- Delete: `flake.nix`, `flake.lock`
+**Files (in `digITpro/AMR-back`) — flake-integration path (repo already uses `use flake . --impure`):**
+- Modify: `flake.nix` (add the shared module input; import the module alongside `./devenv.nix`)
+- Replace: `devenv.nix` (shrink to per-repo `digitpro.rails` config only)
+- Keep: `.envrc`, `flake.lock` (regenerated)
 
 - [ ] **Step 1: Branch**
 
@@ -529,17 +529,24 @@ cd /home/s33d/dev/clients/digitpro/AMR-back
 git checkout -b modernize/shared-devenv
 ```
 
-- [ ] **Step 2: Create `devenv.yaml`** (using the syntax pinned in Task 1)
+- [ ] **Step 2: Add the shared module as a flake input and import it**
 
-```yaml
-inputs:
-  digitpro-devshells:
-    url: github:abstracts33d/nix-devshells
-imports:
-  - digitpro-devshells
+Read AMR-back's current `flake.nix` first. Add the input (during development, pin to the LOCAL checkout on the module branch; switch to `github:abstracts33d/nix-devshells/<rev>` once pushed):
+
+```nix
+    digitpro-devshells = {
+      url = "path:/home/s33d/dev/abstracts33d/nix-devshells";  # dev; → github:abstracts33d/nix-devshells/<rev> after push
+      flake = false;
+    };
 ```
 
-- [ ] **Step 3: Replace `devenv.nix` with the consumer config**
+Then change the existing `devenv.lib.mkShell` modules list from `[ ./devenv.nix ]` to:
+
+```nix
+        modules = [ (inputs.digitpro-devshells + "/rails/devenv.nix") ./devenv.nix ];
+```
+
+- [ ] **Step 3: Replace `devenv.nix` with the consumer config only**
 
 ```nix
 { ... }: {
@@ -550,10 +557,9 @@ imports:
 }
 ```
 
-- [ ] **Step 4: Remove the bespoke flake and reset gems**
+- [ ] **Step 4: Reset gems for the new layout**
 
 ```bash
-git rm flake.nix flake.lock
 rm -rf .gems
 ```
 
@@ -574,7 +580,7 @@ Expected: suite runs (green, or only pre-existing unrelated failures — compare
 - [ ] **Step 7: Commit**
 
 ```bash
-git add devenv.yaml devenv.nix
+git add flake.nix flake.lock devenv.nix
 git commit -m "chore: adopt shared digitpro devenv module"
 ```
 
@@ -588,7 +594,7 @@ For each repo, repeat Task 12 Steps 1–7 with the repo's row from the spec's pe
 - [ ] **topboard** — `{ ruby = "3.2"; postgres = { enable = true; package = pkgs.postgresql_16; }; };` (consumer needs `{ pkgs, ... }:` to reference `pkgs.postgresql_16`)
 - [ ] **isfm** — `{ ruby = "3.4"; node.version = "24"; postgres.enable = true; };`
 - [ ] **boardpilot** — `{ ruby = "3.2"; postgres.enable = true; };` (also removes the old central `.envrc` `use flake #rails-ruby32` line)
-- [ ] **logic** — `{ ruby = "2.7"; postgres.enable = true; };` **best-effort.** If `bundle install`/boot fails on the bundler strategy, add the `ruby == "2.7"` pinned-bundler branch to `modules/rails.nix` (Task 5) and add `2.7` to the Task 11 check matrix; if still failing, leave logic on the old central shell and note it.
+- [ ] **logic** — `{ ruby = "2.7"; postgres.enable = true; };` **best-effort.** If `bundle install`/boot fails on the bundler strategy, add the `ruby == "2.7"` pinned-bundler branch to `rails/devenv.nix` (Task 5) and add `2.7` to the Task 11 check matrix; if still failing, leave logic on the old central shell and note it.
 
 Set `redis.enable = true` for any repo whose Gemfile includes `redis`/`sidekiq` (grep the Gemfile during its migration).
 
