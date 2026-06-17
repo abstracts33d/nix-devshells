@@ -1,7 +1,7 @@
 # Shared devenv module for digITpro Rails dev environments
 
 - **Date:** 2026-06-17
-- **Status:** Approved design, pending implementation plan
+- **Status:** Slim module implemented + Tier-1 checks green (3.2/3.3/3.4); consumer migration pending
 - **Repo:** `abstracts33d/nix-devshells` (module) + digITpro Rails repos (consumers)
 
 ## Problem
@@ -42,6 +42,14 @@ A consumer repo contains:
   inputs:
     nixpkgs:
       url: github:cachix/devenv-nixpkgs/rolling
+    # Required: the module provisions the exact Ruby via devenv's nixpkgs-ruby
+    # integration, which devenv does not bundle. Without this input
+    # `languages.ruby.version` cannot resolve.
+    nixpkgs-ruby:
+      url: github:bobvanderlinden/nixpkgs-ruby
+      inputs:
+        nixpkgs:
+          follows: nixpkgs
     digitpro-devshells:
       url: github:abstracts33d/nix-devshells/<pinned-rev>
       flake: false
@@ -49,16 +57,17 @@ A consumer repo contains:
     - digitpro-devshells/rails
   ```
 
-- `devenv.nix` — sets *only* the per-repo config; the import is declared in `devenv.yaml`, not here:
+- `devenv.nix` — sets *only* the per-repo config; the import is declared in `devenv.yaml`, not here. The Ruby version is **not** set here — it comes from the repo's `.ruby-version` (the single source of truth), read by the module:
 
   ```nix
   { ... }: {
     digitpro.rails = {
-      ruby = "3.2";
       postgres.enable = true;
     };
   }
   ```
+
+- `.ruby-version` — the exact Ruby (e.g. `3.4.1`). The module reads it via `config.devenv.root` and provisions that exact patch through `nixpkgs-ruby`. This is why `--impure` is required and why there is no `ruby` option.
 
 - `.envrc`: `use flake . --impure` (devenv requires impurity).
 
@@ -66,11 +75,22 @@ A consumer repo contains:
 
 Updating the shared module updates every consumer on the next `direnv reload` (subject to each repo's pinned input — see Testing).
 
+## Ruby version
+
+There is **no `ruby` option**. The module provisions the exact Ruby patch from the consumer's `.ruby-version` (single source of truth) via devenv's `nixpkgs-ruby` integration:
+
+```nix
+languages.ruby.version =
+  lib.mkDefault (lib.removePrefix "ruby-"
+    (lib.fileContents "${config.devenv.root}/.ruby-version"));
+```
+
+`mkDefault` lets the flake checks pin the version directly (`mkForce`). If `.ruby-version` is missing the module fails with a clear error naming the path. This replaces the old per-repo nixpkgs pin / ABI-correct `rubyEnv` mapping — `nixpkgs-ruby` resolves any patch version directly.
+
 ## Module interface — `digitpro.rails.*`
 
 | Option | Type | Default | Notes |
 |--------|------|---------|-------|
-| `ruby` | enum `"2.7"`/`"3.2"`/`"3.3"`/`"3.4"` | *(required)* | Maps to the ABI-correct nixpkgs (reuses existing `rubyEnv` pinning) |
 | `node.enable` | bool | `true` | |
 | `node.version` | enum `"22"`/`"24"` | `"22"` | isfm → `"24"` |
 | `node.packageManager` | enum `"yarn"`/`"npm"` | `"yarn"` | |
@@ -83,11 +103,9 @@ Updating the shared module updates every consumer on the next `direnv reload` (s
 
 ## Always-on internals (not per-repo knobs)
 
-1. **Bundler strategy (canonical = AMR-back's):** `languages.ruby.bundler.enable = false` (use Ruby's bundled bundler, avoiding the rubygems integrity conflict the other repos worked around with version-pinning + purging); shadow `Gemfile` strips the `ruby "…"` pin into `.Gemfile.nix` with `BUNDLE_GEMFILE` set; **symlink** `Gemfile.lock` → `.Gemfile.nix.lock` so `bundle install` writes flow back to the canonical lockfile. If Ruby 2.7 cannot use this, the module branches on `ruby == "2.7"` to the pinned-bundler variant.
-2. **Stale-gem guard:** wipe `.gems` when the Ruby store prefix changes (records a stamp at `.gems/.ruby-prefix`).
-3. **vips (always included):** add `vips` to packages and set `LD_LIBRARY_PATH = lib.makeLibraryPath [vips imagemagick]`. On Darwin, override vips with `matio = null; withIntrospection = false;`. Included unconditionally because the cost is low and absence is the exact failure mode that broke vconfig.
-4. **`.gems` layout:** versioned `ruby/$abi` subdir; `BUNDLE_PATH`/`GEM_HOME`/`GEM_PATH`/`PATH` point there.
-5. **`.ruby-version` mismatch warning:** at shell entry, read `.ruby-version`, normalize to `major.minor` (handles `3.2.2`, `ruby-3.2.2`, trailing newline), compare to `digitpro.rails.ruby`, print a yellow warning on mismatch. Runtime check only — never blocks the shell.
+1. **Native Ruby + gems (no workarounds):** `languages.ruby.enable = true` with the exact `.ruby-version` patch from `nixpkgs-ruby`. devenv manages bundler and gems natively. Because the provisioned Ruby is the *exact* version the `Gemfile`/`.ruby-version` pins (not "latest patch from nixpkgs"), the prior workarounds are all **gone**: no Gemfile shadow (`.Gemfile.nix`), no lockfile symlink/mutation, no `bundler.enable = false`, no stale-gem guard, no manual `.gems`/`BUNDLE_PATH`/`GEM_HOME` wiring, and no `enterShell` hardening block. The exact-version match is what made them unnecessary.
+2. **vips (always included):** add `vips` to packages and set `LD_LIBRARY_PATH = lib.makeLibraryPath [vips imagemagick]`. On Darwin, override vips with `matio = null; withIntrospection = false;`. Included unconditionally because the cost is low and absence is the exact failure mode that broke vconfig. **This is the only retained always-on workaround** — `ruby-vips` `dlopen`s `libvips.so.42` at require time and NixOS has no system library path.
+3. **`.ruby-version` mismatch:** not applicable — `.ruby-version` *is* the source of truth, so the module provisions exactly what it names. No warning/comparison needed.
 
 ## Services
 
@@ -99,7 +117,9 @@ Both opt-in. When `postgres.enable`, the module turns on `services.postgres` and
 
 ## Per-repo configuration matrix
 
-| Repo | `ruby` | `node` | `postgres.package` | Notes |
+The `ruby` column below is now each repo's `.ruby-version`, not a module option.
+
+| Repo | `.ruby-version` | `node` | `postgres.package` | Notes |
 |------|--------|--------|--------------------|-------|
 | AMR-back | 3.4 | 22/yarn | default | canary; already runs the canonical pattern |
 | vconfig | 3.4 | 22/yarn | default | libvips fix folds into module |
@@ -112,7 +132,7 @@ Both opt-in. When `postgres.enable`, the module turns on `services.postgres` and
 
 ## Testing
 
-**Tier 1 (now):** the module repo commits a minimal fixture Rails app (a `Gemfile` with `ruby-vips`, `pg`, `nokogiri`) and exposes `checks.<system>.*` that build each `rails-rubyXX` shell and run a smoke test: `bundle install`, `ruby -e "require 'vips'"`, `pg` load. CI runs `nix flake check`. Catches the libvips/native-extension class of breakage in seconds without any real app.
+**Tier 1 (now):** the module repo exposes `checks.<system>.*` that build the devenv module shell for Ruby 3.2/3.3/3.4 and assert two network-free invariants: (1) `libvips.so.42` is reachable on the shell's `LD_LIBRARY_PATH` (the regression that broke vconfig — fails hard if absent), and (2) the provisioned Ruby is the *exact* version pinned. Because the module reads `.ruby-version` (via `mkDefault`), the pure checks pin `languages.ruby.version` directly with `mkForce`; `nixpkgs-ruby` is threaded into `devenv.lib.mkShell` so the version resolves. The repo also commits a minimal fixture Rails app (`tests/fixture`: a `Gemfile`/`.ruby-version` pinning `3.4.1` with `ruby-vips`, `pg`, `nokogiri`); CI runs `nix flake check` plus an impure `bundle install` + `tests/smoke.rb` in the fixture to exercise real native-gem loading.
 
 **Tier 2 (later):** each consumer pins the module input and runs its own CI suite inside the shell (`nix develop -c bundle exec rspec`); a workflow opens "bump shared flake" PRs across the repos so the real app suites are the regression gate. Tracked outside this spec.
 
@@ -123,15 +143,15 @@ Both opt-in. When `postgres.enable`, the module turns on `services.postgres` and
 3. **Canary:** migrate AMR-back (lowest risk — already runs the canonical pattern); verify boot + suite in-shell.
 4. Roll out: vconfig, topboard (`postgresql_16`), isfm (`node 24`), boardpilot.
 5. logic (Ruby 2.7) last, best-effort.
-6. Each migrated repo deletes its bespoke `flake.nix`/`devenv.nix`, replaced by the ~8-line consumer `devenv.nix` + `devenv.yaml`.
+6. Each migrated repo deletes its bespoke `flake.nix`/`devenv.nix` and any `.Gemfile.nix`/`.gems` artifacts, replaced by the small consumer `devenv.nix` + `devenv.yaml` (with the `nixpkgs-ruby` input) + its existing `.ruby-version`.
 
 ## Risks & mitigations
 
-- **Ruby 2.7 + canonical bundler:** may fail; mitigation is the `ruby == "2.7"` branch, else exclude logic.
+- **Ruby 2.7 via nixpkgs-ruby:** `nixpkgs-ruby` should still resolve 2.7.x, but EOL Ruby may need a source build; logic remains best-effort and excludable.
 - **Darwin vips override forces a source build:** slower first build; mitigated by a binary cache.
 - **Binary cache not currently usable:** dev shells log `ignoring untrusted substituter 'devenv.cachix.org' … you are not a trusted user`. Add the user to `trusted-users` in `nix.conf` (and ideally run an org Cachix/attic cache CI pushes to). Independent quick win.
-- **`--impure` reduces reproducibility:** accepted trade-off for devenv services/processes.
-- **First migration changes `.gems` layout:** triggers one `.gems` wipe + `bundle install` per repo.
+- **`--impure` reduces reproducibility:** accepted trade-off for devenv services/processes and for reading `.ruby-version` via `config.devenv.root`.
+- **First migration to native gems:** each repo runs one fresh `bundle install` under devenv-managed gems and drops its old `.gems`/`.Gemfile.nix` artifacts.
 
 ## Rollback
 
