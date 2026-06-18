@@ -48,12 +48,24 @@ in {
       libyaml libffi zlib readline openssl libxml2 libxslt
       imagemagick vips pkg-config gnumake gcc
     ] ++ lib.optionals cfg.postgres.enable [ cfg.postgres.package cfg.postgres.package.pg_config ]
-      ++ lib.optional cfg.devenvUp.enable pkgs.foreman
       ++ cfg.extraPackages;
 
-    processes = lib.mkIf cfg.devenvUp.enable {
-      app.exec = "exec foreman start -f Procfile.dev";
-    };
+    # `devenv up` runs each Procfile.dev entry as a NATIVE devenv process — no
+    # foreman/hivemind wrapper. Using a Ruby-based foreman here would inject its
+    # own (nixpkgs) Ruby's GEM_PATH into the children, clashing with the project's
+    # exact nixpkgs-ruby (e.g. foreman@3.4.9 vs app@3.4.5) and breaking gem
+    # resolution (bootsnap LoadError, "gem not in bundle"). Parsing Procfile.dev
+    # keeps it the single source of truth while each process runs directly under
+    # the project Ruby. `bin/dev` (the team's foreman flow) is untouched.
+    processes = lib.mkIf cfg.devenvUp.enable (
+      let
+        procLines = lib.splitString "\n" (lib.fileContents "${config.devenv.root}/Procfile.dev");
+        matches = lib.filter (m: m != null)
+          (map (builtins.match "([a-zA-Z0-9_-]+):[[:space:]]*(.+)") procLines);
+      in lib.listToAttrs (map
+        (m: lib.nameValuePair (builtins.elemAt m 0) { exec = builtins.elemAt m 1; })
+        matches)
+    );
 
     env = {
       LD_LIBRARY_PATH = lib.makeLibraryPath [ vips pkgs.imagemagick ];
