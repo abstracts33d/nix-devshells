@@ -20,6 +20,7 @@ in {
     };
     redis.enable = lib.mkOption { type = lib.types.bool; default = false; };
     devenvUp.enable = lib.mkOption { type = lib.types.bool; default = false; };
+    wkhtmltopdf.enable = lib.mkOption { type = lib.types.bool; default = false; };
     extraPackages = lib.mkOption { type = lib.types.listOf lib.types.package; default = []; };
     extraEnv = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = {}; };
   };
@@ -48,6 +49,7 @@ in {
       libyaml libffi zlib readline openssl libxml2 libxslt
       imagemagick vips pkg-config gnumake gcc
     ] ++ lib.optionals cfg.postgres.enable [ cfg.postgres.package cfg.postgres.package.pg_config ]
+      ++ lib.optionals cfg.wkhtmltopdf.enable [ pkgs.wkhtmltopdf ]
       ++ cfg.extraPackages;
 
     # `devenv up` runs each Procfile.dev entry as a NATIVE devenv process — no
@@ -74,6 +76,8 @@ in {
       DATABASE_URL = "postgresql:///";
     } // lib.optionalAttrs cfg.redis.enable {
       REDIS_URL = "redis://localhost:6379";
+    } // lib.optionalAttrs cfg.wkhtmltopdf.enable {
+      WKHTMLTOPDF_BIN = "${pkgs.wkhtmltopdf}/bin/wkhtmltopdf";
     } // cfg.extraEnv;
 
     services.postgres = lib.mkIf cfg.postgres.enable {
