@@ -1,7 +1,7 @@
 { lib, pkgs, config, ... }:
 let
   cfg = config.digitpro.rails;
-  nodePkg = { "22" = pkgs.nodejs_22; "24" = pkgs.nodejs_24; }.${cfg.node.version};
+  nodePkg = { "22" = pkgs.nodejs_22; "24" = pkgs.nodejs_24; "26" = pkgs.nodejs_26; }.${cfg.node.version};
   vips =
     if pkgs.stdenv.isDarwin
     then (pkgs.vips.override { matio = null; withIntrospection = false; }).overrideAttrs
@@ -11,7 +11,7 @@ in {
   options.digitpro.rails = {
     node = {
       enable = lib.mkOption { type = lib.types.bool; default = true; };
-      version = lib.mkOption { type = lib.types.enum [ "22" "24" ]; default = "22"; };
+      version = lib.mkOption { type = lib.types.enum [ "22" "24" "26" ]; default = "22"; };
       packageManager = lib.mkOption { type = lib.types.enum [ "yarn" "npm" ]; default = "yarn"; };
     };
     postgres = {

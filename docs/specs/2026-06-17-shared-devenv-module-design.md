@@ -92,7 +92,7 @@ languages.ruby.version =
 | Option | Type | Default | Notes |
 |--------|------|---------|-------|
 | `node.enable` | bool | `true` | |
-| `node.version` | enum `"22"`/`"24"` | `"22"` | isfm → `"24"` |
+| `node.version` | enum `"22"`/`"24"`/`"26"` | `"22"` | isfm → `"24"`, forpro-app → `"26"` |
 | `node.packageManager` | enum `"yarn"`/`"npm"` | `"yarn"` | |
 | `postgres.enable` | bool | `false` | opt-in |
 | `postgres.package` | package | `pkgs.postgresql` | topboard → `postgresql_16` |
