@@ -59,13 +59,21 @@ in {
     # resolution (bootsnap LoadError, "gem not in bundle"). Parsing Procfile.dev
     # keeps it the single source of truth while each process runs directly under
     # the project Ruby. `bin/dev` (the team's foreman flow) is untouched.
+    #
+    # is_tty makes process-compose allocate a pty. Without one it starts the
+    # process with a closed stdin, and both esbuild and the Tailwind CLI stop
+    # watching as soon as stdin closes: the watchers exited right after their
+    # first build, so the assets went stale with nothing in the log.
     processes = lib.mkIf cfg.devenvUp.enable (
       let
         procLines = lib.splitString "\n" (lib.fileContents "${config.devenv.root}/Procfile.dev");
         matches = lib.filter (m: m != null)
           (map (builtins.match "([a-zA-Z0-9_-]+):[[:space:]]*(.+)") procLines);
       in lib.listToAttrs (map
-        (m: lib.nameValuePair (builtins.elemAt m 0) { exec = builtins.elemAt m 1; })
+        (m: lib.nameValuePair (builtins.elemAt m 0) {
+          exec = builtins.elemAt m 1;
+          process-compose.is_tty = true;
+        })
         matches)
     );
 

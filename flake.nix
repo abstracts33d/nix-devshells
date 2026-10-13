@@ -230,6 +230,56 @@
     # the nix flake check log for which were executed locally vs in CI (each
     # pulls + compiles a ruby, so a sandbox may run a subset — never silently).
     checkRubyVersions = ["3.2.7" "3.3.6" "3.4.1"];
+
+    # `devenv up` runs the Procfile.dev entries under process-compose, which
+    # starts each process without a pty, so its stdin is closed. esbuild and the
+    # Tailwind CLI both stop watching when stdin closes: the watchers died right
+    # after the first build and the assets went stale with nothing in the log.
+    # Every Procfile-derived process must carry is_tty so process-compose
+    # allocates a pty. The fixture Procfile.dev must stay git-tracked, since a
+    # flake only sees tracked files.
+    mkProcessesCheck = system: let
+      pkgs = import nixpkgs {inherit system;};
+      inherit (pkgs) lib;
+      eval = devenv.lib.mkEval {
+        inherit pkgs;
+        modules = [
+          ./rails/devenv.nix
+          {
+            digitpro.rails.devenvUp.enable = true;
+            languages.ruby.version = lib.mkForce "3.4.1";
+            devenv.root = lib.mkForce (toString ./tests/fixture);
+          }
+        ];
+        inputs = inputs // {self = self;};
+      };
+      expected = ["web" "js" "css"];
+      processes = eval.config.processes;
+      missing = lib.filter (name: !(processes.${name}.process-compose.is_tty or false)) expected;
+    in
+      pkgs.runCommand "devenv-rails-processes-tty" {
+        missing = lib.concatStringsSep " " missing;
+        parsed = lib.concatStringsSep " " (lib.filter (name: processes ? ${name}) expected);
+      } ''
+        echo "== structural check: Procfile.dev processes =="
+
+        if [ "$parsed" != "web js css" ]; then
+          echo "FAIL: Procfile.dev parsing produced '$parsed', expected 'web js css'" >&2
+          exit 1
+        fi
+        echo "ok: parsed $parsed"
+
+        if [ -n "$missing" ]; then
+          echo "FAIL: process-compose.is_tty missing on: $missing" >&2
+          echo "Without a pty, process-compose closes stdin and the esbuild and" >&2
+          echo "Tailwind watchers stop after their first build." >&2
+          exit 1
+        fi
+        echo "ok: is_tty on web, js, css"
+
+        echo "PROCESSES_OK"
+        touch $out
+      '';
   in {
     lib = {
       inherit mkRailsShellFor;
@@ -265,6 +315,9 @@
           name = "devenv-rails-${builtins.replaceStrings ["."] [""] ruby}";
           value = mkDevenvCheck system ruby;
         })
-        checkRubyVersions));
+        checkRubyVersions)
+      // {
+        devenv-rails-processes-tty = mkProcessesCheck system;
+      });
   };
 }
