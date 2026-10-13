@@ -231,13 +231,12 @@
     # pulls + compiles a ruby, so a sandbox may run a subset — never silently).
     checkRubyVersions = ["3.2.7" "3.3.6" "3.4.1"];
 
-    # `devenv up` runs the Procfile.dev entries under process-compose, which
-    # starts each process without a pty, so its stdin is closed. esbuild and the
-    # Tailwind CLI both stop watching when stdin closes: the watchers died right
-    # after the first build and the assets went stale with nothing in the log.
-    # Every Procfile-derived process must carry is_tty so process-compose
-    # allocates a pty. The fixture Procfile.dev must stay git-tracked, since a
-    # flake only sees tracked files.
+    # `devenv up` runs the Procfile.dev entries through devenv-tasks, which
+    # hands each command a closed stdin. esbuild and the Tailwind CLI both stop
+    # watching when stdin closes: the watchers died right after the first build
+    # and the assets went stale with nothing in the log. Every Procfile-derived
+    # process must therefore keep stdin open for the whole run. The fixture
+    # Procfile.dev must stay git-tracked, since a flake only sees tracked files.
     mkProcessesCheck = system: let
       pkgs = import nixpkgs {inherit system;};
       inherit (pkgs) lib;
@@ -255,10 +254,16 @@
       };
       expected = ["web" "js" "css"];
       processes = eval.config.processes;
-      missing = lib.filter (name: !(processes.${name}.process-compose.is_tty or false)) expected;
+      holdsStdin = name: lib.hasInfix "sleep infinity | " processes.${name}.exec;
+      keepsCommand = name: lib.hasSuffix (
+        {web = "bin/rails server"; js = "yarn build --watch"; css = "yarn build:css --watch";}.${name}
+      ) processes.${name}.exec;
+      missing = lib.filter (name: !(holdsStdin name)) expected;
+      mangled = lib.filter (name: !(keepsCommand name)) expected;
     in
-      pkgs.runCommand "devenv-rails-processes-tty" {
+      pkgs.runCommand "devenv-rails-processes-stdin" {
         missing = lib.concatStringsSep " " missing;
+        mangled = lib.concatStringsSep " " mangled;
         parsed = lib.concatStringsSep " " (lib.filter (name: processes ? ${name}) expected);
       } ''
         echo "== structural check: Procfile.dev processes =="
@@ -270,12 +275,18 @@
         echo "ok: parsed $parsed"
 
         if [ -n "$missing" ]; then
-          echo "FAIL: process-compose.is_tty missing on: $missing" >&2
-          echo "Without a pty, process-compose closes stdin and the esbuild and" >&2
-          echo "Tailwind watchers stop after their first build." >&2
+          echo "FAIL: stdin is not held open for: $missing" >&2
+          echo "devenv-tasks hands the command a closed stdin, and the esbuild" >&2
+          echo "and Tailwind watchers stop as soon as stdin closes." >&2
           exit 1
         fi
-        echo "ok: is_tty on web, js, css"
+        echo "ok: stdin held open for web, js, css"
+
+        if [ -n "$mangled" ]; then
+          echo "FAIL: the Procfile command was altered for: $mangled" >&2
+          exit 1
+        fi
+        echo "ok: Procfile commands preserved verbatim"
 
         echo "PROCESSES_OK"
         touch $out
@@ -317,7 +328,7 @@
         })
         checkRubyVersions)
       // {
-        devenv-rails-processes-tty = mkProcessesCheck system;
+        devenv-rails-processes-stdin = mkProcessesCheck system;
       });
   };
 }

@@ -60,19 +60,24 @@ in {
     # keeps it the single source of truth while each process runs directly under
     # the project Ruby. `bin/dev` (the team's foreman flow) is untouched.
     #
-    # is_tty makes process-compose allocate a pty. Without one it starts the
-    # process with a closed stdin, and both esbuild and the Tailwind CLI stop
-    # watching as soon as stdin closes: the watchers exited right after their
-    # first build, so the assets went stale with nothing in the log.
+    # devenv runs every process through devenv-tasks, which hands the command a
+    # closed stdin. esbuild and the Tailwind CLI both stop watching the moment
+    # stdin closes ("[watch] stopped automatically because stdin was closed"),
+    # so under `devenv up` the js and css watchers exited right after their
+    # first build and the assets went stale with nothing in the log. Holding
+    # stdin open for the whole run keeps them watching. process-compose's
+    # is_tty does not help: the pty stops at the devenv-tasks wrapper and never
+    # reaches the command. `script` would allocate one, but it is util-linux
+    # only and this module also runs on Darwin, so coreutils does the job.
     processes = lib.mkIf cfg.devenvUp.enable (
       let
         procLines = lib.splitString "\n" (lib.fileContents "${config.devenv.root}/Procfile.dev");
         matches = lib.filter (m: m != null)
           (map (builtins.match "([a-zA-Z0-9_-]+):[[:space:]]*(.+)") procLines);
+        holdStdinOpen = command: "${pkgs.coreutils}/bin/sleep infinity | ${command}";
       in lib.listToAttrs (map
         (m: lib.nameValuePair (builtins.elemAt m 0) {
-          exec = builtins.elemAt m 1;
-          process-compose.is_tty = true;
+          exec = holdStdinOpen (builtins.elemAt m 1);
         })
         matches)
     );
